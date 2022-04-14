@@ -1,0 +1,290 @@
+---
+title: "Sindrome Respiratória"
+runtime: shiny
+
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(stringr)
+library(shiny)
+```
+
+```{r}
+# Carregando conjunto de dados
+dados_resp<-read.csv2("https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SRAG/2022/INFLUD22-28-03-2022.csv")
+#https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SRAG/2021/INFLUD21-28-03-2022.csv
+#https://s3.sa-east-1.amazonaws.com/ckan.saude.gov.br/SRAG/2020/INFLUD20-28-03-2022.csv
+
+# Criando a coluna da variável Diagnóstico
+dados_resp$Diagnóstico = numeric(dim(dados_resp)[1])
+
+classi <- dados_resp$CLASSI_FIN
+
+dados_resp$Diagnóstico <- ifelse(classi==1,"Influenza",ifelse(classi==2,"Outro vírus respiratório", ifelse(classi==3,"Outro agente etiológico",
+               ifelse(classi==4,"Não especificado",
+               ifelse(classi==5,"COVID-19","")))))
+```
+
+```{r}
+dados_resp2 = dados_resp%>%
+  select(VACINA_COV, EVOLUCAO, HOSPITAL, UTI, Diagnóstico, SG_UF)%>%
+  mutate("Vacina" = as.factor(VACINA_COV)) %>%
+  mutate("Evolução" = as.factor(EVOLUCAO)) %>%
+  mutate("Internação" = as.factor(HOSPITAL)) %>%
+  mutate("UTI"=as.factor(UTI)) %>%
+  filter(Evolução != 9) %>%
+  filter(Vacina != 9) %>%
+  filter(Internação != 9) %>%
+  filter(UTI != 9) %>%
+  na.omit()
+```
+
+```{r}
+
+dados_resp2$Evolução = ifelse(dados_resp2$Evolução == 1, "Cura",
+                              ifelse(dados_resp2$Evolução == 2, "Óbito",
+                              ifelse(dados_resp2$Evolução == 3, "Óbito (outras causas)",
+                              ifelse(dados_resp2$Evolução == 9, "Ignorado",""))))
+
+dados_resp2$Internação = ifelse(dados_resp2$Internação == 1, "Sim",                   ifelse(dados_resp2$Internação == 2, "Não",                                        ifelse(dados_resp2$Internação == 9, "Ignorado","")))
+
+dados_resp2$UTI = ifelse(dados_resp2$UTI==1,"Sim",ifelse(dados_resp2$UTI==2,"Não",ifelse(dados_resp2$UTI==9,"Ignorado","")))
+
+tab1<-table(dados_resp2$Evolução,dados_resp2$Diagnóstico)
+p1<-prop.table(tab1,2)
+p1<-as.data.frame(p1)
+colnames(p1)<-c("Evolução","Diagnóstico","Proporção")
+
+tab2<-table(dados_resp2$Internação,dados_resp2$Diagnóstico)
+p2<-prop.table(tab2,2)
+p2<-as.data.frame(p2)
+colnames(p2)<-c("Internação","Diagnóstico","Proporção")
+
+
+tab3<-table(dados_resp2$UTI,dados_resp2$Diagnóstico)
+p3<-prop.table(tab3,2)
+p3<-as.data.frame(p3)
+colnames(p3)<-c("UTI","Diagnóstico","Proporção")
+
+```
+
+
+
+
+# Sidebar{.sidebar}
+
+```{r}
+# Criando opção de selecionar diagnóstico
+inputPanel(selectInput("Diagnóstico", 
+                       label = h3("Diagnóstico Final:"),
+                       choices = list("Todas",
+                                      "COVID-19",
+                                      "Influenza",
+                                      "Não especificado",
+                                      "Outro agente etiológico",
+                                      "Outro vírus respiratório"
+                                      ), 
+                       selected = "Todas"))
+
+dados <- reactive({
+  resp2 <- dados_resp2%>%
+    filter(str_detect(Diagnóstico,ifelse(input$Diagnóstico == "Todas","",input$Diagnóstico)
+    ))
+  return(resp2)
+})
+```
+
+# Univariada {data-icon="fa-signal"}
+
+Row
+-----------------------------------------------------------------------
+
+### Evolução do Caso
+
+```{r}
+#dados_teste<-data.frame("Evolução"=dados_resp$EVOLUCAO,"Classificação"=dados_resp$CLASSI_FIN)
+#dados_teste<-na.omit(dados_teste)%>%
+ # filter(Evolução!=9)%>%
+  #mutate("Diagnóstico"=as.factor(Classificação))
+
+ev_diag <- reactive({
+  evo <- p1 %>%
+         filter(str_detect(Diagnóstico,
+                           ifelse(input$Diagnóstico == "Todas","", input$Diagnóstico)
+    ))
+  return(evo)
+})
+
+renderPlotly({
+ g1 <- ggplot(data = ev_diag(), aes(x = Evolução, y = Proporção, fill = Diagnóstico))  +          geom_col(position = "dodge") +
+       labs(x="Evolução", y="Proporção") +
+       scale_y_continuous(labels = scales::percent) + 
+       theme_minimal()
+ ggplotly(g1) 
+})
+```
+
+### Casos de Internação 
+
+```{r}
+int_diag <- reactive({
+  int <- p2%>%
+         filter(str_detect(Diagnóstico,
+                           ifelse(input$Diagnóstico=="Todas","",input$Diagnóstico)
+    ))
+  return(int)
+})
+
+
+renderPlotly({
+ g2 <- ggplot(data = int_diag(), aes(x = Internação, y = Proporção, fill = Diagnóstico)) +        geom_col(position = "dodge") +
+       labs(x="Internação", y="Proporção") +
+       scale_y_continuous(labels = scales::percent) +
+       theme_minimal()
+ ggplotly(g2) 
+})
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Casos de Internação na UTI
+
+```{r}
+uti_diag<- reactive({
+  uti<- p3 %>%
+        filter(str_detect(Diagnóstico,
+                          ifelse(input$Diagnóstico == "Todas", "", input$Diagnóstico)
+    ))
+  return(uti)
+})
+
+
+renderPlotly({
+ g3<-ggplot(data= uti_diag(),aes(x=UTI,y=Proporção ,fill= Diagnóstico) )+geom_col(position = "dodge")+
+  labs(x="UTI", y="Proporção")+
+   scale_y_continuous(labels = scales::percent)+theme_minimal()
+
+ ggplotly(g3) 
+})
+```
+
+
+
+
+
+# Bivariadas{data-icon="fa-signal"}
+
+Row
+-----------------------------------------------------------------------
+
+
+### Internação por Evolução do Caso
+
+```{r}
+int_fin<-data.frame("Evolução"=as.factor(dados_resp2$Evolução),"Internação"=as.factor(dados_resp2$Internação))
+int_fin<-na.omit(int_fin)%>%
+ filter(Evolução!=9)%>%
+  filter(Internação!=9)
+
+ggplot(data= int_fin,aes(x=Evolução, fill=Internação))+geom_bar(position="fill")+
+  ylab('Proporção')+theme_minimal()
+```
+
+### Internação UTI por Evolução do Caso
+```{r}
+#internado UTI
+UTI_fin<-data.frame("Evolução"=as.factor(dados_resp2$Evolução),"UTI"=as.factor(dados_resp2$UTI))
+UTI_fin<-na.omit(UTI_fin)%>%
+  filter(Evolução!=9)%>%
+  filter(UTI!=9)
+
+ggplot(data= UTI_fin,aes(x=Evolução, fill=UTI))+geom_bar(position = "fill")+
+  ylab('Proporção')+theme_minimal()
+#casos que vão pra uti tem mais óbitos
+```
+
+
+### Internação UTI por Suporte Ventilatório
+
+```{r}
+dados_resp3 = dados_resp 
+
+dados_resp3$UTI = ifelse(dados_resp3$UTI==1,"Sim",ifelse(dados_resp3$UTI==2,"Não",ifelse(dados_resp3$UTI==9,"Ignorado","")))
+
+dados_resp3$SUPORT_VEN =ifelse(dados_resp3$SUPORT_VEN==1,"Sim",ifelse(dados_resp3$SUPORT_VEN==2,"Não",ifelse(dados_resp3$SUPORT_VEN==9,"Ignorado",ifelse(dados_resp3$SUPORT_VEN=="","Ignorado",""))))
+
+#internado UTI suporte vent
+UTI_sup<-data.frame("Ventilação"=as.factor(dados_resp3$SUPORT_VEN),"UTI"=as.factor(dados_resp3$UTI))
+UTI_sup<-na.omit(UTI_sup)%>%
+  filter(Ventilação!="Ignorado")%>%
+  filter(UTI!="Ignorado")
+
+ggplot(data= UTI_sup,aes(x=UTI, fill=Ventilação))+geom_bar(position = "fill")+ #position = fill da a proporção
+  labs(y="Proporção")+theme_minimal()#+coord_polar(start=0)
+#casos de uti tem maior proporção de pessoas que utilizam ventilação (invasivo ou não)
+```
+
+Row {.tabset}
+-----------------------------------------------------------------------
+
+### Vacina COVID-19 com Evolução do Caso
+
+```{r}
+#recebeu vacina covid com óbito 
+
+covid_resp<-dados_resp%>%
+  select(VACINA_COV,EVOLUCAO, CLASSI_FIN,HOSPITAL,UTI)%>%
+  mutate("Vacina"=as.factor(VACINA_COV))%>%
+  mutate("Evolução"=as.factor(EVOLUCAO))%>%
+  mutate("Internação"=as.factor(HOSPITAL))%>%
+  mutate("UTI"=as.factor(UTI))%>%
+  filter(CLASSI_FIN==5)%>%
+  filter(Evolução!=9)%>%
+  filter(Vacina!=9)%>%
+  filter(Internação!=9)%>%
+  filter(UTI!=9)%>%
+  na.omit()
+
+covid_resp$Evolução = ifelse(covid_resp$Evolução==1,"Cura",
+                              ifelse(covid_resp$Evolução==2,"Óbito",
+                              ifelse(covid_resp$Evolução==3,"Óbito (outras causas)",
+                                     ifelse(covid_resp$Evolução==9,"Ignorado",""))))
+
+covid_resp$Vacina = ifelse(covid_resp$Vacina==1,"Sim",ifelse(covid_resp$Vacina==2,"Não",""))
+  
+ggplot(data= covid_resp,aes(x=Vacina, fill=Evolução))+geom_bar(position = "fill")+ #position = fill da a proporção
+  labs(y="Proporção")+theme_minimal()#+coord_polar(start=0)
+
+
+```
+
+### Vacina COVID-19 contra Internação UTI
+```{r}
+covid_resp$UTI = ifelse(covid_resp$UTI==1,"Sim",ifelse(covid_resp$UTI==2,"Não",ifelse(covid_resp$UTI==9,"Ignorado","")))
+ggplot(data= covid_resp,aes(x=Vacina, fill=UTI))+geom_bar(position = "fill")+ #position = fill da a proporção
+  labs(y="Proporção")+theme_minimal()#?não muda muito a proporção de internação por quem tomou vacina, parece um pouco maior para quem não tomou
+
+
+```
+
+### Vacina COVID-19 por Internação
+
+```{r}
+
+covid_resp$Internação = ifelse(covid_resp$Internação==1,"Sim",ifelse(covid_resp$Internação==2,"Não",ifelse(covid_resp$Internação==9,"Ignorado","")))
+
+ggplot(data= covid_resp,aes(x=Vacina, fill=Internação))+geom_bar(position = "fill")+ #position = fill da a proporção
+  labs(y="Proporção")+theme_minimal()#+coord_polar(start=0)?todos foram internados
+
+```
+
+
